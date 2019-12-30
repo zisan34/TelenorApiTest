@@ -15,9 +15,8 @@ class KeyValueController extends Controller
      * @return \Illuminate\Http\Response
      */
 
-    private $keyValueArr = array('key1' => 'value1', 'key2' => 'value2', 'key3' => 'value3' );
-
     private $redis;
+
     public function __construct(){
         $this->redis = app()->make('redis');
     }
@@ -25,21 +24,60 @@ class KeyValueController extends Controller
     public function index(Request $request)
     {
         //
+        $this->reset_ttl();
 
-        // return response()->json(['data' => $request]);
-
+        $keys_arr = array();
         if($request->has('keys'))
         {
-            $keys = explode(',', $request->keys);
-            foreach ($keys as $key) {
-                $data[$key] = $this->keyValueArr[$key];
-            }
+            $keys_arr = explode(',', $request->keys);
+        }
+
+        $data = $this->fetch_key_value($keys_arr);
+
+        if(count($data) > 0)
+        {
             return response()->json(['data' => $data], 200);
         }
         else
         {
-            return response()->json(['data' => $this->keyValueArr], 200);
+            return response()->json([], 204);
         }
+    }
+
+
+    private function fetch_key_value($keys=null)
+    {
+
+        if($keys)
+            $keys_arr = $keys;
+        else
+            $keys_arr = $this->redis->keys('*');
+
+        $response_arr = array();
+        foreach($keys_arr as $key)
+        {
+            if($this->redis->exists($key))
+            {
+                $response_arr[$key]=$this->redis->get($key);
+            }
+        }
+
+        return $response_arr;
+
+    }
+
+    private function reset_ttl()
+    {
+        $keys_arr = $this->redis->keys('*');
+
+        foreach($keys_arr as $key)
+        {
+            if($this->redis->exists($key))
+            {
+                $this->redis->setex($key, 300, $this->redis->get($key));
+            }
+        }
+
     }
 
     /**
@@ -61,14 +99,17 @@ class KeyValueController extends Controller
     public function store(Request $request)
     {
         //
-        foreach ($request->all() as $key => $value) {
-            $this->keyValueArr[$key] = $request[$key];
-           if(!$this->redis->exists($key)){
-            $this->redis->set($key, $request[$key], 'EX', 300); 
-           }
+        $keys_arr = array();
+        foreach ($request->all() as $key => $value)
+        {
+            array_push($keys_arr, $key);
+            if(!$this->redis->exists($key))
+            {
+                $this->redis->set($key, $request[$key], 'EX', 300); 
+            }
 
         }
-        return response()->json(['data' => $this->redis->keys('*')],201);
+        return response()->json(['data' => $this->fetch_key_value($keys_arr)], 201);
     }
 
     /**
@@ -104,10 +145,21 @@ class KeyValueController extends Controller
     {
         //
         // return $request;
-        foreach ($request->all() as $key => $value) {
-            $this->keyValueArr[$key] = $request[$key];
+        $keys_arr = array();
+        foreach ($request->all() as $key => $value)
+        {
+            array_push($keys_arr, $key);
+            if($this->redis->exists($key))
+            {
+                $this->redis->setex($key, 300, $value);
+            }
         }
-        return response()->json(['data' => $this->keyValueArr], 200);
+
+        $data = $this->fetch_key_value($keys_arr);
+        if(count($data) > 0)
+            return response()->json(['data' => $data], 200);
+        else
+            return response()->json([], 304);
     }
 
     /**
